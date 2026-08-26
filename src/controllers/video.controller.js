@@ -61,6 +61,7 @@ export const uploadVideo = async (req, res, next) => {
       deriveTitleFromFilename(req.file.originalname);
 
     const video = await Video.create({
+      user: req.user.id,
       title,
       originalName: req.file.originalname,
       shareToken,
@@ -119,13 +120,15 @@ export const getVideos = async (req, res, next) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const skip = (page - 1) * limit;
 
+    const filter = { user: req.user.id, status: { $ne: 'failed' } };
+
     const [videos, total] = await Promise.all([
-      Video.find({ status: { $ne: 'failed' } })
+      Video.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean(),
-      Video.countDocuments({ status: { $ne: 'failed' } }),
+      Video.countDocuments(filter),
     ]);
 
     return res.json({
@@ -161,7 +164,10 @@ export const getVideoById = async (req, res, next) => {
       });
     }
 
-    const video = await Video.findById(id).lean();
+    const video = await Video.findOne({
+      _id: id,
+      user: req.user.id,
+    }).lean();
 
     if (!video || video.status === 'failed') {
       return res.status(404).json({
@@ -242,7 +248,7 @@ export const deleteVideo = async (req, res, next) => {
       });
     }
 
-    const video = await Video.findById(id);
+    const video = await Video.findOne({ _id: id, user: req.user.id });
 
     if (!video) {
       return res.status(404).json({

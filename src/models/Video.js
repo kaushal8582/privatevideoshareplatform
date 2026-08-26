@@ -2,6 +2,12 @@ import mongoose from 'mongoose';
 
 const videoSchema = new mongoose.Schema(
   {
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
     title: {
       type: String,
       required: true,
@@ -17,6 +23,7 @@ const videoSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+
     storage: {
       provider: {
         type: String,
@@ -60,6 +67,7 @@ const videoSchema = new mongoose.Schema(
 );
 
 videoSchema.index({ createdAt: -1 });
+videoSchema.index({ user: 1, createdAt: -1 });
 
 const Video = mongoose.model('Video', videoSchema);
 

@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import authRoutes from './src/routes/auth.routes.js';
 import videoRoutes from './src/routes/video.routes.js';
 import { notFoundHandler } from './src/middleware/notFound.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
@@ -13,11 +14,25 @@ const PORT = process.env.PORT || 5000;
 
 app.use(helmet());
 
-const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+const frontendOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+if (process.env.NODE_ENV !== 'production') {
+  for (const local of ['http://localhost:5173', 'http://127.0.0.1:5173']) {
+    if (!frontendOrigins.includes(local)) frontendOrigins.push(local);
+  }
+}
 
 app.use(
   cors({
-    origin: frontendUrl,
+    origin: (origin, callback) => {
+      if (!origin || frontendOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
@@ -39,6 +54,7 @@ const globalLimiter = rateLimit({
 });
 
 app.use('/api', globalLimiter);
+app.use('/api/auth', authRoutes);
 app.use('/api/videos', videoRoutes);
 
 app.get('/api/health', (_req, res) => {
@@ -54,11 +70,17 @@ app.use(errorHandler);
 
 const start = async () => {
   try {
+    if (!process.env.JWT_SECRET) {
+      console.warn(
+        'Warning: JWT_SECRET is not set. Auth will fail until you add it to .env'
+      );
+    }
+
     await connectDatabase();
 
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
-      console.log(`Frontend origin: ${frontendUrl}`);
+      console.log(`Frontend origins: ${frontendOrigins.join(', ')}`);
     });
   } catch (err) {
     console.error('Failed to start server:', err.message);

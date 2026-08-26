@@ -9,6 +9,7 @@ import {
   healthCheck,
 } from '../controllers/video.controller.js';
 import { uploadSingleVideo } from '../middleware/upload.middleware.js';
+import { requireAuth } from '../middleware/auth.middleware.js';
 
 const router = Router();
 
@@ -52,15 +53,13 @@ const deleteLimiter = rateLimit({
 
 router.get('/health', healthCheck);
 
-router.post('/upload', uploadLimiter, uploadSingleVideo, uploadVideo);
-
-router.get('/', getVideos);
-
-// Share route MUST be registered before /:id to avoid conflict
+// Public — anyone with the link can watch
 router.get('/share/:shareToken', shareLimiter, getVideoByShareToken);
 
-router.get('/:id', getVideoById);
-
-router.delete('/:id', deleteLimiter, deleteVideo);
+// Owner-only
+router.post('/upload', requireAuth, uploadLimiter, uploadSingleVideo, uploadVideo);
+router.get('/', requireAuth, getVideos);
+router.get('/:id', requireAuth, getVideoById);
+router.delete('/:id', requireAuth, deleteLimiter, deleteVideo);
 
 export default router;
