@@ -1,4 +1,12 @@
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  UploadPartCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -8,8 +16,10 @@ import { getR2Client, getR2Config, isPrivateR2Endpoint } from '../../config/r2.j
 import { safeUnlink } from '../../utils/cleanupTempFile.js';
 import { extractVideoMetadata } from '../../utils/videoMetadata.js';
 
-const PLAYBACK_URL_EXPIRY_SECONDS = 4 * 60 * 60; // 4 hours
-const THUMBNAIL_URL_EXPIRY_SECONDS = 24 * 60 * 60; // 24 hours
+const PLAYBACK_URL_EXPIRY_SECONDS = 4 * 60 * 60;
+const THUMBNAIL_URL_EXPIRY_SECONDS = 24 * 60 * 60;
+const PART_URL_EXPIRY_SECONDS = 2 * 60 * 60;
+export const MULTIPART_PART_SIZE = 8 * 1024 * 1024; // 8 MB
 
 const generateAssetId = () => crypto.randomBytes(12).toString('hex');
 
@@ -32,19 +42,16 @@ const buildPublicUrl = (key) => {
 const createPresignedUrl = async (key, expiresIn = PLAYBACK_URL_EXPIRY_SECONDS) => {
   const { bucket } = getR2Config();
   const client = getR2Client();
-
-  const command = new GetObjectCommand({
-    Bucket: bucket,
-    Key: key,
-  });
-
-  return getSignedUrl(client, command, { expiresIn });
+  return getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+    { expiresIn }
+  );
 };
 
 const uploadBufferToR2 = async (key, body, contentType) => {
   const { bucket } = getR2Config();
   const client = getR2Client();
-
   await client.send(
     new PutObjectCommand({
       Bucket: bucket,
@@ -56,13 +63,111 @@ const uploadBufferToR2 = async (key, body, contentType) => {
 };
 
 /**
- * Upload a video file to Cloudflare R2 with thumbnail + duration metadata.
+ * Start multipart upload + return presigned part URLs.
+ * Browser uploads chunks directly to R2 (bypasses API proxy 413).
  */
+export const createDirectMultipartUpload = async ({
+  originalName,
+  mimeType,
+  partCount,
+}) => {
+  const { bucket } = getR2Config();
+  const client = getR2Client();
+  const { videoKey, thumbnailKey } = buildObjectKeys(originalName);
+
+  const createRes = await client.send(
+    new CreateMultipartUploadCommand({
+      Bucket: bucket,
+      Key: videoKey,
+      ContentType: mimeType || 'video/mp4',
+    })
+  );
+
+  const r2UploadId = createRes.UploadId;
+  const parts = [];
+
+  for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
+    const url = await getSignedUrl(
+      client,
+      new UploadPartCommand({
+        Bucket: bucket,
+        Key: videoKey,
+        UploadId: r2UploadId,
+        PartNumber: partNumber,
+      }),
+      { expiresIn: PART_URL_EXPIRY_SECONDS }
+    );
+    parts.push({ partNumber, url });
+  }
+
+  const thumbnailUploadUrl = await getSignedUrl(
+    client,
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: thumbnailKey,
+      ContentType: 'image/jpeg',
+    }),
+    { expiresIn: PART_URL_EXPIRY_SECONDS }
+  );
+
+  return {
+    key: videoKey,
+    thumbnailKey,
+    r2UploadId,
+    partSize: MULTIPART_PART_SIZE,
+    parts,
+    thumbnailUploadUrl,
+  };
+};
+
+export const completeDirectMultipartUpload = async ({ key, r2UploadId, parts }) => {
+  const { bucket } = getR2Config();
+  const client = getR2Client();
+  const sorted = [...parts].sort((a, b) => a.PartNumber - b.PartNumber);
+
+  await client.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: r2UploadId,
+      MultipartUpload: {
+        Parts: sorted.map((p) => ({
+          ETag: p.ETag,
+          PartNumber: p.PartNumber,
+        })),
+      },
+    })
+  );
+
+  const publicPlaybackUrl = buildPublicUrl(key);
+  return {
+    provider: 'r2',
+    publicId: key,
+    url: publicPlaybackUrl || (await createPresignedUrl(key)),
+  };
+};
+
+export const abortDirectMultipartUpload = async (key, r2UploadId) => {
+  if (!key || !r2UploadId) return;
+  const { bucket } = getR2Config();
+  const client = getR2Client();
+  try {
+    await client.send(
+      new AbortMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: r2UploadId,
+      })
+    );
+  } catch {
+    // ignore
+  }
+};
+
 export const uploadVideo = async (file) => {
   const { bucket } = getR2Config();
   const client = getR2Client();
   const { videoKey, thumbnailKey } = buildObjectKeys(file.originalname);
-
   let thumbnailPath = null;
 
   try {
@@ -87,12 +192,10 @@ export const uploadVideo = async (file) => {
     }
 
     const publicPlaybackUrl = buildPublicUrl(videoKey);
-    const playbackUrl = publicPlaybackUrl || (await createPresignedUrl(videoKey));
-
     return {
       provider: 'r2',
       publicId: videoKey,
-      url: playbackUrl,
+      url: publicPlaybackUrl || (await createPresignedUrl(videoKey)),
       thumbnailPublicId,
       duration: metadata.duration,
       bytes: file.size,
@@ -108,27 +211,21 @@ export const deleteVideo = async (publicId, thumbnailPublicId = null) => {
   const { bucket } = getR2Config();
   const client = getR2Client();
 
-  if (!publicId) {
-    throw new Error('publicId is required to delete a video');
-  }
+  if (!publicId) throw new Error('publicId is required to delete a video');
 
   const keysToDelete = [publicId];
   if (thumbnailPublicId) {
     keysToDelete.push(thumbnailPublicId);
   } else {
-    const derivedThumb = publicId.replace(/^videos\//, 'thumbnails/').replace(/\.[^.]+$/, '.jpg');
-    keysToDelete.push(derivedThumb);
+    keysToDelete.push(
+      publicId.replace(/^videos\//, 'thumbnails/').replace(/\.[^.]+$/, '.jpg')
+    );
   }
 
   try {
     await Promise.all(
       keysToDelete.map((Key) =>
-        client.send(
-          new DeleteObjectCommand({
-            Bucket: bucket,
-            Key,
-          })
-        )
+        client.send(new DeleteObjectCommand({ Bucket: bucket, Key }))
       )
     );
     return { result: 'ok' };
@@ -137,7 +234,6 @@ export const deleteVideo = async (publicId, thumbnailPublicId = null) => {
     if (status === 404 || err?.name === 'NoSuchKey') {
       return { result: 'not found' };
     }
-
     const error = new Error(`R2 deletion failed: ${err.message}`);
     error.code = 'STORAGE_DELETE_FAILED';
     error.details = err;
@@ -147,16 +243,11 @@ export const deleteVideo = async (publicId, thumbnailPublicId = null) => {
 
 export const getVideoUrl = async (publicId, storedUrl) => {
   if (!publicId) return '';
-
   const publicPlaybackUrl = buildPublicUrl(publicId);
   if (publicPlaybackUrl && storedUrl && !isPrivateR2Endpoint(storedUrl)) {
     return storedUrl;
   }
-
-  if (publicPlaybackUrl) {
-    return publicPlaybackUrl;
-  }
-
+  if (publicPlaybackUrl) return publicPlaybackUrl;
   return createPresignedUrl(publicId);
 };
 
@@ -166,12 +257,9 @@ export const getThumbnailUrl = async (thumbnailPublicId, videoPublicId) => {
     (videoPublicId
       ? videoPublicId.replace(/^videos\//, 'thumbnails/').replace(/\.[^.]+$/, '.jpg')
       : null);
-
   if (!key) return null;
-
   const publicThumbUrl = buildPublicUrl(key);
   if (publicThumbUrl) return publicThumbUrl;
-
   try {
     return await createPresignedUrl(key, THUMBNAIL_URL_EXPIRY_SECONDS);
   } catch {

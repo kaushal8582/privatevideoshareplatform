@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Video from '../models/Video.js';
+import UploadSession from '../models/UploadSession.js';
 import storage from '../services/storage/storage.service.js';
 import { cleanupTempUpload } from '../utils/cleanupTempFile.js';
 import { generateShareToken } from '../utils/generateToken.js';
@@ -7,6 +8,10 @@ import {
   validateVideoFile,
   deriveTitleFromFilename,
   buildShareUrl,
+  isAllowedMimeType,
+  isAllowedExtension,
+  getMaxVideoSizeBytes,
+  getMaxVideoSizeMb,
 } from '../utils/validators.js';
 
 const formatVideoListItem = async (video) => {
@@ -33,6 +38,264 @@ const formatVideoListItem = async (video) => {
   };
 };
 
+const createUniqueShareToken = async () => {
+  let shareToken = generateShareToken();
+  for (let i = 0; i < 3; i += 1) {
+    const existing = await Video.findOne({ shareToken }).lean();
+    if (!existing) return shareToken;
+    shareToken = generateShareToken();
+  }
+  return shareToken;
+};
+
+/**
+ * POST /api/videos/upload/init
+ * Start direct-to-R2 multipart upload (avoids proxy 413).
+ */
+export const initDirectUpload = async (req, res, next) => {
+  try {
+    const originalName = String(req.body?.filename || '').trim();
+    const mimeType = String(req.body?.mimeType || 'video/mp4').trim();
+    const size = Number(req.body?.size);
+    const title =
+      (req.body?.title && String(req.body.title).trim()) ||
+      deriveTitleFromFilename(originalName);
+
+    if (!originalName || !isAllowedExtension(originalName)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Unsupported file extension. Allowed: .mp4, .webm, .mov, .mkv.',
+        error: 'INVALID_FILE',
+      });
+    }
+
+    if (!isAllowedMimeType(mimeType)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Unsupported video type. Allowed: MP4, WebM, MOV, MKV.',
+        error: 'INVALID_FILE',
+      });
+    }
+
+    if (!Number.isFinite(size) || size <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid file size.',
+        error: 'INVALID_FILE',
+      });
+    }
+
+    if (size > getMaxVideoSizeBytes()) {
+      return res.status(400).json({
+        success: false,
+        message: `File too large. Maximum size is ${getMaxVideoSizeMb()} MB.`,
+        error: 'FILE_TOO_LARGE',
+      });
+    }
+
+    const partSize = storage.MULTIPART_PART_SIZE;
+    const partCount = Math.max(1, Math.ceil(size / partSize));
+
+    if (partCount > 10000) {
+      return res.status(400).json({
+        success: false,
+        message: 'File requires too many parts. Please choose a smaller video.',
+        error: 'FILE_TOO_LARGE',
+      });
+    }
+
+    const direct = await storage.createDirectMultipartUpload({
+      originalName,
+      mimeType,
+      partCount,
+    });
+
+    const session = await UploadSession.create({
+      user: req.user.id,
+      key: direct.key,
+      thumbnailKey: direct.thumbnailKey,
+      r2UploadId: direct.r2UploadId,
+      originalName,
+      mimeType,
+      size,
+      title,
+      partCount,
+      status: 'pending',
+      expiresAt: new Date(Date.now() + 6 * 60 * 60 * 1000),
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Upload session created',
+      data: {
+        sessionId: session._id,
+        partSize: direct.partSize,
+        partCount,
+        parts: direct.parts,
+        thumbnailUploadUrl: direct.thumbnailUploadUrl,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/videos/upload/complete
+ */
+export const completeDirectUpload = async (req, res, next) => {
+  try {
+    const sessionId = req.body?.sessionId;
+    const parts = Array.isArray(req.body?.parts) ? req.body.parts : [];
+    const durationRaw = req.body?.duration;
+    const hasThumbnail = Boolean(req.body?.hasThumbnail);
+
+    if (!sessionId || !mongoose.Types.ObjectId.isValid(sessionId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid upload session.',
+        error: 'INVALID_SESSION',
+      });
+    }
+
+    const session = await UploadSession.findOne({
+      _id: sessionId,
+      user: req.user.id,
+      status: 'pending',
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Upload session not found or already finished.',
+        error: 'SESSION_NOT_FOUND',
+      });
+    }
+
+    if (parts.length !== session.partCount) {
+      return res.status(400).json({
+        success: false,
+        message: `Expected ${session.partCount} uploaded parts, got ${parts.length}.`,
+        error: 'INVALID_PARTS',
+      });
+    }
+
+    const normalizedParts = parts.map((p) => ({
+      PartNumber: Number(p.partNumber ?? p.PartNumber),
+      ETag: String((p.etag ?? p.ETag) || '').replace(/"/g, ''),
+    }));
+
+    if (normalizedParts.some((p) => !p.PartNumber || !p.ETag)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Each part must include partNumber and etag.',
+        error: 'INVALID_PARTS',
+      });
+    }
+
+    const completeParts = normalizedParts.map((p) => ({
+      PartNumber: p.PartNumber,
+      ETag: p.ETag.startsWith('"') ? p.ETag : `"${p.ETag}"`,
+    }));
+
+    const uploadResult = await storage.completeDirectMultipartUpload({
+      key: session.key,
+      r2UploadId: session.r2UploadId,
+      parts: completeParts,
+    });
+
+    const shareToken = await createUniqueShareToken();
+    const duration =
+      durationRaw != null && Number.isFinite(Number(durationRaw))
+        ? Number(durationRaw)
+        : null;
+
+    const video = await Video.create({
+      user: req.user.id,
+      title: session.title || deriveTitleFromFilename(session.originalName),
+      originalName: session.originalName,
+      shareToken,
+      storage: {
+        provider: uploadResult.provider,
+        publicId: uploadResult.publicId,
+        url: uploadResult.url,
+        thumbnailPublicId: hasThumbnail ? session.thumbnailKey : null,
+      },
+      mimeType: session.mimeType,
+      size: session.size,
+      duration,
+      status: 'ready',
+    });
+
+    session.status = 'completed';
+    await session.save();
+
+    const shareUrl = buildShareUrl(shareToken);
+    const playbackUrl = await storage.getVideoUrl(
+      video.storage.publicId,
+      video.storage.url
+    );
+    const thumbnailUrl = await storage.getThumbnailUrl(
+      video.storage.thumbnailPublicId,
+      video.storage.publicId
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Video uploaded successfully',
+      data: {
+        id: video._id,
+        title: video.title,
+        shareToken: video.shareToken,
+        shareUrl,
+        videoUrl: playbackUrl,
+        thumbnailUrl,
+        size: video.size,
+        duration: video.duration,
+        createdAt: video.createdAt,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/videos/upload/abort
+ */
+export const abortDirectUpload = async (req, res, next) => {
+  try {
+    const sessionId = req.body?.sessionId;
+    if (!sessionId || !mongoose.Types.ObjectId.isValid(sessionId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid upload session.',
+        error: 'INVALID_SESSION',
+      });
+    }
+
+    const session = await UploadSession.findOne({
+      _id: sessionId,
+      user: req.user.id,
+      status: 'pending',
+    });
+
+    if (session) {
+      await storage.abortDirectMultipartUpload(session.key, session.r2UploadId);
+      session.status = 'aborted';
+      await session.save();
+    }
+
+    return res.json({
+      success: true,
+      message: 'Upload aborted',
+      data: { sessionId },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 /**
  * POST /api/videos/upload
  */
@@ -48,13 +311,7 @@ export const uploadVideo = async (req, res, next) => {
     }
 
     const uploadResult = await storage.uploadVideo(req.file);
-
-    let shareToken = generateShareToken();
-    for (let i = 0; i < 3; i += 1) {
-      const existing = await Video.findOne({ shareToken }).lean();
-      if (!existing) break;
-      shareToken = generateShareToken();
-    }
+    const shareToken = await createUniqueShareToken();
 
     const title =
       (req.body?.title && String(req.body.title).trim()) ||

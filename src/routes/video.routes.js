@@ -2,6 +2,9 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import {
   uploadVideo,
+  initDirectUpload,
+  completeDirectUpload,
+  abortDirectUpload,
   getVideos,
   getVideoById,
   getVideoByShareToken,
@@ -17,7 +20,7 @@ const windowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
 
 const uploadLimiter = rateLimit({
   windowMs,
-  max: Number(process.env.UPLOAD_RATE_LIMIT_MAX) || 20,
+  max: Number(process.env.UPLOAD_RATE_LIMIT_MAX) || 40,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -56,8 +59,14 @@ router.get('/health', healthCheck);
 // Public — anyone with the link can watch
 router.get('/share/:shareToken', shareLimiter, getVideoByShareToken);
 
-// Owner-only
+// Direct-to-R2 chunked upload (recommended — avoids proxy 413)
+router.post('/upload/init', requireAuth, uploadLimiter, initDirectUpload);
+router.post('/upload/complete', requireAuth, uploadLimiter, completeDirectUpload);
+router.post('/upload/abort', requireAuth, uploadLimiter, abortDirectUpload);
+
+// Legacy single-request upload (small files / local only)
 router.post('/upload', requireAuth, uploadLimiter, uploadSingleVideo, uploadVideo);
+
 router.get('/', requireAuth, getVideos);
 router.get('/:id', requireAuth, getVideoById);
 router.delete('/:id', requireAuth, deleteLimiter, deleteVideo);
