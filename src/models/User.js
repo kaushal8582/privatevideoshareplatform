@@ -19,21 +19,58 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
-      required: true,
+      required: false,
       minlength: 6,
       select: false,
+      default: null,
+    },
+    googleId: {
+      type: String,
+      sparse: true,
+      unique: true,
+    },
+    avatar: {
+      type: String,
+      default: undefined,
+    },
+    providers: {
+      type: [String],
+      enum: ['email', 'google'],
+      default: undefined,
+    },
+    role: {
+      type: String,
+      enum: ['user', 'creator', 'admin'],
+      default: 'creator',
+    },
+    status: {
+      type: String,
+      enum: ['active', 'banned'],
+      default: 'active',
+      index: true,
+    },
+    totalAppViews: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    payableViews: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
   },
   { timestamps: true }
 );
 
 userSchema.pre('save', async function hashPassword(next) {
-  if (!this.isModified('password')) return next();
+  if (!this.isModified('password') || !this.password) return next();
   this.password = await bcrypt.hash(this.password, 12);
   next();
 });
 
 userSchema.methods.comparePassword = function comparePassword(candidate) {
+  if (!this.password) return Promise.resolve(false);
   return bcrypt.compare(candidate, this.password);
 };
 

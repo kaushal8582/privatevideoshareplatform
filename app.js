@@ -5,6 +5,9 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import authRoutes from './src/routes/auth.routes.js';
 import videoRoutes from './src/routes/video.routes.js';
+import analyticsRoutes from './src/routes/analytics.routes.js';
+import viewsRoutes from './src/routes/views.routes.js';
+import dashboardRoutes from './src/routes/dashboard.routes.js';
 import { notFoundHandler } from './src/middleware/notFound.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
 import { connectDatabase } from './src/config/database.js';
@@ -33,7 +36,7 @@ app.use(
       }
       return callback(null, false);
     },
-    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
@@ -56,6 +59,9 @@ const globalLimiter = rateLimit({
 app.use('/api', globalLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/videos', videoRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/views', viewsRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({

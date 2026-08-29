@@ -47,7 +47,61 @@ export const requireAuth = async (req, res, next) => {
       });
     }
 
-    req.user = { id: String(user._id), name: user.name, email: user.email };
+    if (user.status === 'banned') {
+      return res.status(403).json({
+        success: false,
+        message: 'This account has been suspended.',
+        error: 'ACCOUNT_BANNED',
+      });
+    }
+
+    req.user = {
+      id: String(user._id),
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar || null,
+      providers: user.providers || [],
+      role: user.role || 'creator',
+      status: user.status || 'active',
+      createdAt: user.createdAt,
+    };
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
+/** Attach req.user when Bearer token is valid; otherwise continue anonymously. */
+export const optionalAuth = async (req, res, next) => {
+  try {
+    const header = req.headers.authorization || '';
+    const [scheme, token] = header.split(' ');
+    if (scheme !== 'Bearer' || !token) {
+      return next();
+    }
+
+    let payload;
+    try {
+      payload = jwt.verify(token, getJwtSecret());
+    } catch {
+      return next();
+    }
+
+    const user = await User.findById(payload.sub).lean();
+    if (!user || user.status === 'banned') {
+      return next();
+    }
+
+    req.user = {
+      id: String(user._id),
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar || null,
+      providers: user.providers || [],
+      role: user.role || 'creator',
+      status: user.status || 'active',
+      createdAt: user.createdAt,
+    };
     next();
   } catch (err) {
     next(err);

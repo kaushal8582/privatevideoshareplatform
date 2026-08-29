@@ -33,6 +33,8 @@ const formatVideoListItem = async (video) => {
     size: video.size,
     duration: video.duration,
     status: video.status,
+    viewCount: video.viewCount || 0,
+    payableViewCount: video.payableViewCount || 0,
     createdAt: video.createdAt,
     updatedAt: video.updatedAt,
   };

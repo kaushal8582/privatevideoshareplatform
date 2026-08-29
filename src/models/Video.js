@@ -60,6 +60,18 @@ const videoSchema = new mongoose.Schema(
       enum: ['uploading', 'processing', 'ready', 'failed'],
       default: 'ready',
     },
+    /** App play sessions that crossed the “counted” threshold */
+    viewCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    /** App views that qualify for creator payout (rules applied) */
+    payableViewCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,
