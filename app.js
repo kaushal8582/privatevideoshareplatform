@@ -22,19 +22,42 @@ const frontendOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
   .map((s) => s.trim())
   .filter(Boolean);
 
+// Always allow local dev origins when not in production
 if (process.env.NODE_ENV !== 'production') {
-  for (const local of ['http://localhost:5173', 'http://127.0.0.1:5173']) {
+  for (const local of [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
+  ]) {
     if (!frontendOrigins.includes(local)) frontendOrigins.push(local);
+  }
+}
+
+// If mastplayer.in is allowed, also allow www
+for (const origin of [...frontendOrigins]) {
+  if (origin === 'https://mastplayer.in' && !frontendOrigins.includes('https://www.mastplayer.in')) {
+    frontendOrigins.push('https://www.mastplayer.in');
+  }
+  if (origin === 'https://www.mastplayer.in' && !frontendOrigins.includes('https://mastplayer.in')) {
+    frontendOrigins.push('https://mastplayer.in');
   }
 }
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || frontendOrigins.includes(origin)) {
+      // Same-origin / curl / server-to-server
+      if (!origin) {
         return callback(null, true);
       }
-      return callback(null, false);
+      if (frontendOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(`CORS blocked origin: ${origin}. Allowed: ${frontendOrigins.join(', ')}`);
+      }
+      return callback(new Error(`CORS not allowed for origin: ${origin}`));
     },
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
