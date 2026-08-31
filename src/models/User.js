@@ -59,6 +59,28 @@ const userSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    /** OG Earn — remapped-link earnings (90% share) */
+    ogEarnViews: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    ogEarnBalanceUsd: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    /** OG Earn — royalty as original creator (10%) */
+    ogRoyaltyViews: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    ogRoyaltyBalanceUsd: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     referralCode: {
       type: String,
       unique: true,

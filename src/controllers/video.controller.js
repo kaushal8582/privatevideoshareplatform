@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Video from '../models/Video.js';
 import UploadSession from '../models/UploadSession.js';
+import OgShareLink from '../models/OgShareLink.js';
 import storage from '../services/storage/storage.service.js';
 import { cleanupTempUpload } from '../utils/cleanupTempFile.js';
 import { generateShareToken } from '../utils/generateToken.js';
@@ -13,6 +14,8 @@ import {
   getMaxVideoSizeBytes,
   getMaxVideoSizeMb,
 } from '../utils/validators.js';
+import { resolveShareContext } from '../services/ogEarn.service.js';
+import { getOgEarnRules } from '../utils/ogEarnRules.js';
 
 const formatVideoListItem = async (video) => {
   const shareUrl = buildShareUrl(video.shareToken);
@@ -42,9 +45,12 @@ const formatVideoListItem = async (video) => {
 
 const createUniqueShareToken = async () => {
   let shareToken = generateShareToken();
-  for (let i = 0; i < 3; i += 1) {
-    const existing = await Video.findOne({ shareToken }).lean();
-    if (!existing) return shareToken;
+  for (let i = 0; i < 8; i += 1) {
+    const [existingVideo, existingOg] = await Promise.all([
+      Video.findOne({ shareToken }).lean(),
+      OgShareLink.findOne({ shareToken }).lean(),
+    ]);
+    if (!existingVideo && !existingOg) return shareToken;
     shareToken = generateShareToken();
   }
   return shareToken;
@@ -448,6 +454,7 @@ export const getVideoById = async (req, res, next) => {
 
 /**
  * GET /api/videos/share/:shareToken
+ * Resolves original upload links and OG Earn remapped links.
  */
 export const getVideoByShareToken = async (req, res, next) => {
   try {
@@ -461,15 +468,18 @@ export const getVideoByShareToken = async (req, res, next) => {
       });
     }
 
-    const video = await Video.findOne({ shareToken }).lean();
+    const ctx = await resolveShareContext(shareToken);
 
-    if (!video || video.status === 'failed') {
+    if (!ctx || ctx.video.status === 'failed') {
       return res.status(404).json({
         success: false,
         message: 'Video not found. This video may have been deleted or the link may be invalid.',
         error: 'VIDEO_NOT_FOUND',
       });
     }
+
+    const video = ctx.video;
+    const ogRules = getOgEarnRules();
 
     return res.json({
       success: true,
@@ -485,6 +495,15 @@ export const getVideoByShareToken = async (req, res, next) => {
         size: video.size,
         duration: video.duration,
         createdAt: video.createdAt,
+        shareToken: ctx.shareToken,
+        linkKind: ctx.kind,
+        originalCreatorId: ctx.originalCreatorId,
+        ogEarn: {
+          enabled: ogRules.enabled,
+          royaltyPercent: Math.round(ogRules.royaltyRate * 100),
+          ownerSharePercent: Math.round((1 - ogRules.royaltyRate) * 100),
+          isRemapped: ctx.kind === 'og',
+        },
       },
     });
   } catch (err) {
@@ -533,6 +552,10 @@ export const deleteVideo = async (req, res, next) => {
     }
 
     await Video.findByIdAndDelete(id);
+    await OgShareLink.updateMany(
+      { video: id },
+      { $set: { status: 'disabled' } }
+    );
 
     return res.json({
       success: true,

@@ -2,7 +2,6 @@ import User from '../models/User.js';
 import ReferralCommission from '../models/ReferralCommission.js';
 import { getViewRules } from '../utils/viewRules.js';
 import {
-  commissionUsdPerPayableView,
   getReferralRules,
   roundUsd,
 } from '../utils/referralRules.js';
@@ -54,18 +53,31 @@ export async function creditReferralBonus({
   referredUserId,
   videoViewId = null,
 }) {
+  const viewRules = getViewRules();
+  const grossEarningsUsd = roundUsd((1 / 1000) * viewRules.usdPerThousand);
+  return creditReferralBonusFromUsd({
+    referredUserId,
+    amountUsd: grossEarningsUsd,
+    videoViewId,
+  });
+}
+
+/**
+ * Model 1 bonus from an arbitrary earning amount (e.g. OG Earn 90% share).
+ */
+export async function creditReferralBonusFromUsd({
+  referredUserId,
+  amountUsd,
+  videoViewId = null,
+}) {
   const referralRules = getReferralRules();
   if (!referralRules.enabled) return;
 
   const referred = await User.findById(referredUserId).select('referredBy').lean();
   if (!referred?.referredBy) return;
 
-  const viewRules = getViewRules();
-  const grossEarningsUsd = roundUsd((1 / 1000) * viewRules.usdPerThousand);
-  const commissionUsd = commissionUsdPerPayableView(
-    viewRules.usdPerThousand,
-    referralRules.commissionRate
-  );
+  const grossEarningsUsd = roundUsd(amountUsd);
+  const commissionUsd = roundUsd(grossEarningsUsd * referralRules.commissionRate);
 
   if (commissionUsd <= 0) return;
 
