@@ -2,6 +2,7 @@ import Video from '../models/Video.js';
 import VideoView from '../models/VideoView.js';
 import User from '../models/User.js';
 import { getViewRules } from '../utils/viewRules.js';
+import { creditReferralBonus } from '../services/referral.service.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -104,6 +105,13 @@ export const heartbeat = async (req, res, next) => {
     if (newlyPayable) {
       await Video.updateOne({ _id: video._id }, { $inc: { payableViewCount: 1 } });
       await User.updateOne({ _id: video.user }, { $inc: { payableViews: 1 } });
+
+      creditReferralBonus({
+        referredUserId: video.user,
+        videoViewId: session._id,
+      }).catch((err) => {
+        console.error('Referral bonus credit failed:', err.message);
+      });
     }
 
     return res.json({

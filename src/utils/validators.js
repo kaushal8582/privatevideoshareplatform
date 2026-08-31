@@ -77,12 +77,36 @@ export const deriveTitleFromFilename = (filename = '') => {
     .join(' ');
 };
 
-export const buildShareUrl = (shareToken) => {
-  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(
-    /\/$/,
-    ''
+/** Single frontend origin for share/referral links (FRONTEND_URL may be comma-separated for CORS). */
+export const getPrimaryFrontendUrl = () => {
+  const raw = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const origins = raw
+    .split(',')
+    .map((s) => s.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+
+  if (origins.length === 0) return 'http://localhost:5173';
+
+  const canonical = origins.find((o) => o === 'https://mastplayer.in');
+  if (canonical) return canonical;
+
+  const httpsProd = origins.find(
+    (o) =>
+      o.startsWith('https://') &&
+      !o.includes('localhost') &&
+      !o.includes('127.0.0.1')
   );
-  return `${frontendUrl}/v/${shareToken}`;
+  if (httpsProd) return httpsProd;
+
+  return origins[0];
+};
+
+export const buildShareUrl = (shareToken) => {
+  return `${getPrimaryFrontendUrl()}/v/${shareToken}`;
+};
+
+export const buildReferralUrl = (referralCode) => {
+  return `${getPrimaryFrontendUrl()}/register?ref=${encodeURIComponent(referralCode)}`;
 };
 
 export { ALLOWED_MIME_TYPES, ALLOWED_EXTENSIONS };

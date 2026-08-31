@@ -8,6 +8,7 @@ import videoRoutes from './src/routes/video.routes.js';
 import analyticsRoutes from './src/routes/analytics.routes.js';
 import viewsRoutes from './src/routes/views.routes.js';
 import dashboardRoutes from './src/routes/dashboard.routes.js';
+import referralsRoutes from './src/routes/referrals.routes.js';
 import { notFoundHandler } from './src/middleware/notFound.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
 import { connectDatabase } from './src/config/database.js';
@@ -85,6 +86,7 @@ app.use('/api/videos', videoRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/views', viewsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/referrals', referralsRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({

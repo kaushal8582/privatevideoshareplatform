@@ -1,6 +1,8 @@
 import User from '../models/User.js';
 import { signToken } from '../middleware/auth.middleware.js';
 import { verifyGoogleIdToken } from '../utils/googleAuth.js';
+import { applyReferralOnSignup } from '../services/referral.service.js';
+import { ensureReferralCode } from '../utils/referralCode.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -57,6 +59,8 @@ export const register = async (req, res, next) => {
       });
     }
 
+    const referralCode = String(req.body?.referralCode || '').trim();
+
     const existing = await User.findOne({ email });
     if (existing) {
       if (existing.googleId && !existing.password) {
@@ -81,6 +85,10 @@ export const register = async (req, res, next) => {
       role: 'creator',
       status: 'active',
     });
+
+    await ensureReferralCode(user);
+    await applyReferralOnSignup(user, referralCode);
+
     const token = signToken(user._id);
 
     return res.status(201).json({
@@ -186,6 +194,7 @@ export const login = async (req, res, next) => {
 export const googleAuth = async (req, res, next) => {
   try {
     const idToken = String(req.body?.idToken || '').trim();
+    const referralCode = String(req.body?.referralCode || '').trim();
     if (!idToken) {
       return res.status(400).json({
         success: false,
@@ -220,6 +229,8 @@ export const googleAuth = async (req, res, next) => {
           role: 'creator',
           status: 'active',
         });
+        await ensureReferralCode(user);
+        await applyReferralOnSignup(user, referralCode);
       }
     } else if (profile.avatar && user.avatar !== profile.avatar) {
       user.avatar = profile.avatar;

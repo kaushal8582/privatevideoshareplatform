@@ -59,6 +59,35 @@ const userSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      uppercase: true,
+      trim: true,
+      maxlength: 16,
+    },
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    referralAppliedAt: {
+      type: Date,
+      default: null,
+    },
+    /** Model 1 bonus balance — separate from creator earnings */
+    referralBalanceUsd: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    referralLifetimeUsd: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   { timestamps: true }
 );
