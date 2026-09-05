@@ -110,6 +110,28 @@ const userSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    /** Creator social / external links (saved for later public display) */
+    socialLinks: {
+      type: [
+        {
+          title: { type: String, trim: true, maxlength: 80, default: '' },
+          url: { type: String, trim: true, maxlength: 500, required: true },
+          platform: { type: String, trim: true, maxlength: 32, default: 'link' },
+        },
+      ],
+      default: [],
+      validate: {
+        validator(v) {
+          return !v || v.length <= 8;
+        },
+        message: 'You can add at most 8 social links.',
+      },
+    },
+    /** Account-level: allow viewers to download this creator's videos in the app */
+    allowVideoDownload: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true }
 );

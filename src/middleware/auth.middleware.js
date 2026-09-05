@@ -63,6 +63,14 @@ export const requireAuth = async (req, res, next) => {
       providers: user.providers || [],
       role: user.role || 'creator',
       status: user.status || 'active',
+      socialLinks: Array.isArray(user.socialLinks)
+        ? user.socialLinks.map((l) => ({
+            title: l.title || '',
+            url: l.url || '',
+            platform: l.platform || 'link',
+          }))
+        : [],
+      allowVideoDownload: user.allowVideoDownload !== false,
       createdAt: user.createdAt,
     };
     next();
@@ -100,6 +108,14 @@ export const optionalAuth = async (req, res, next) => {
       providers: user.providers || [],
       role: user.role || 'creator',
       status: user.status || 'active',
+      socialLinks: Array.isArray(user.socialLinks)
+        ? user.socialLinks.map((l) => ({
+            title: l.title || '',
+            url: l.url || '',
+            platform: l.platform || 'link',
+          }))
+        : [],
+      allowVideoDownload: user.allowVideoDownload !== false,
       createdAt: user.createdAt,
     };
     next();

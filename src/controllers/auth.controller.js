@@ -3,6 +3,7 @@ import { signToken } from '../middleware/auth.middleware.js';
 import { verifyGoogleIdToken } from '../utils/googleAuth.js';
 import { applyReferralOnSignup } from '../services/referral.service.js';
 import { ensureReferralCode } from '../utils/referralCode.js';
+import { sanitizeSocialLinks } from '../utils/socialLinks.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -14,6 +15,14 @@ export const formatUser = (user) => ({
   providers: user.providers || [],
   role: user.role || 'creator',
   status: user.status || 'active',
+  socialLinks: Array.isArray(user.socialLinks)
+    ? user.socialLinks.map((l) => ({
+        title: l.title || '',
+        url: l.url || '',
+        platform: l.platform || 'link',
+      }))
+    : [],
+  allowVideoDownload: user.allowVideoDownload !== false,
   createdAt: user.createdAt,
 });
 
@@ -278,12 +287,17 @@ export const me = async (req, res) => {
 
 /**
  * PATCH /api/auth/me
- * Update display name (and optional avatar URL).
+ * Update display name, avatar, social links, download preference.
  */
 export const updateMe = async (req, res, next) => {
   try {
     const name = req.body?.name != null ? String(req.body.name).trim() : null;
     const avatar = req.body?.avatar != null ? String(req.body.avatar).trim() : undefined;
+    const hasSocialLinks = Object.prototype.hasOwnProperty.call(req.body || {}, 'socialLinks');
+    const hasAllowDownload = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      'allowVideoDownload'
+    );
 
     const user = await User.findById(req.user.id);
     if (!user) {
@@ -309,6 +323,14 @@ export const updateMe = async (req, res, next) => {
       user.avatar = avatar || null;
     }
 
+    if (hasSocialLinks) {
+      user.socialLinks = sanitizeSocialLinks(req.body.socialLinks);
+    }
+
+    if (hasAllowDownload) {
+      user.allowVideoDownload = Boolean(req.body.allowVideoDownload);
+    }
+
     await user.save();
 
     return res.json({
@@ -317,6 +339,13 @@ export const updateMe = async (req, res, next) => {
       data: { user: formatUser(user) },
     });
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        message: err.message,
+        error: err.code || 'VALIDATION_ERROR',
+      });
+    }
     next(err);
   }
 };

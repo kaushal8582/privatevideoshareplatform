@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Video from '../models/Video.js';
+import User from '../models/User.js';
 import UploadSession from '../models/UploadSession.js';
 import OgShareLink from '../models/OgShareLink.js';
 import storage from '../services/storage/storage.service.js';
@@ -480,6 +481,40 @@ export const getVideoByShareToken = async (req, res, next) => {
 
     const video = ctx.video;
     const ogRules = getOgEarnRules();
+    const creatorId = ctx.originalCreatorId;
+
+    const [creator, relatedDocs] = await Promise.all([
+      creatorId
+        ? User.findById(creatorId).select('name avatar socialLinks allowVideoDownload').lean()
+        : null,
+      creatorId
+        ? Video.find({
+            user: creatorId,
+            status: { $ne: 'failed' },
+            _id: { $ne: video._id },
+          })
+            .sort({ viewCount: -1, createdAt: -1 })
+            .limit(5)
+            .select('title shareToken duration viewCount size createdAt storage originalName')
+            .lean()
+        : [],
+    ]);
+
+    const relatedVideos = await Promise.all(
+      (relatedDocs || []).map(async (v) => ({
+        title: v.title,
+        shareToken: v.shareToken,
+        duration: v.duration,
+        viewCount: v.viewCount || 0,
+        size: v.size,
+        createdAt: v.createdAt,
+        originalName: v.originalName,
+        thumbnailUrl: await storage.getThumbnailUrl(
+          v.storage?.thumbnailPublicId,
+          v.storage?.publicId
+        ),
+      }))
+    );
 
     return res.json({
       success: true,
@@ -498,6 +533,22 @@ export const getVideoByShareToken = async (req, res, next) => {
         shareToken: ctx.shareToken,
         linkKind: ctx.kind,
         originalCreatorId: ctx.originalCreatorId,
+        creator: creator
+          ? {
+              id: String(creator._id),
+              name: creator.name || 'Creator',
+              avatar: creator.avatar || null,
+              socialLinks: Array.isArray(creator.socialLinks)
+                ? creator.socialLinks.map((l) => ({
+                    title: l.title || '',
+                    url: l.url || '',
+                    platform: l.platform || 'link',
+                  }))
+                : [],
+              allowVideoDownload: creator.allowVideoDownload !== false,
+            }
+          : null,
+        relatedVideos,
         ogEarn: {
           enabled: ogRules.enabled,
           royaltyPercent: Math.round(ogRules.royaltyRate * 100),
