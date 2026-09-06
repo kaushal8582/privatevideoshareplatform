@@ -79,6 +79,17 @@ export const requireAuth = async (req, res, next) => {
   }
 };
 
+export const requireAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Admin access required.',
+      error: 'FORBIDDEN',
+    });
+  }
+  return next();
+};
+
 /** Attach req.user when Bearer token is valid; otherwise continue anonymously. */
 export const optionalAuth = async (req, res, next) => {
   try {

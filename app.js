@@ -11,6 +11,8 @@ import dashboardRoutes from './src/routes/dashboard.routes.js';
 import referralsRoutes from './src/routes/referrals.routes.js';
 import ogEarnRoutes from './src/routes/ogEarn.routes.js';
 import telegramRoutes from './src/routes/telegram.routes.js';
+import payoutsRoutes from './src/routes/payouts.routes.js';
+import adminRoutes from './src/routes/admin.routes.js';
 import { notFoundHandler } from './src/middleware/notFound.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
 import { connectDatabase } from './src/config/database.js';
@@ -92,6 +94,8 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/referrals', referralsRoutes);
 app.use('/api/og-earn', ogEarnRoutes);
 app.use('/api/telegram', telegramRoutes);
+app.use('/api/payouts', payoutsRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({

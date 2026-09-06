@@ -132,6 +132,22 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    /** Lifetime USD marked paid via manual payouts */
+    payoutLifetimePaidUsd: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    payoutMethods: {
+      upiId: { type: String, trim: true, maxlength: 80, default: null },
+      /** Name on UPI account (required with UPI payouts) */
+      upiAccountName: { type: String, trim: true, maxlength: 80, default: null },
+      bank: {
+        accountName: { type: String, trim: true, maxlength: 80, default: null },
+        accountNumber: { type: String, trim: true, maxlength: 32, default: null },
+        ifsc: { type: String, trim: true, uppercase: true, maxlength: 20, default: null },
+      },
+    },
   },
   { timestamps: true }
 );
