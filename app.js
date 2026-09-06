@@ -10,9 +10,11 @@ import viewsRoutes from './src/routes/views.routes.js';
 import dashboardRoutes from './src/routes/dashboard.routes.js';
 import referralsRoutes from './src/routes/referrals.routes.js';
 import ogEarnRoutes from './src/routes/ogEarn.routes.js';
+import telegramRoutes from './src/routes/telegram.routes.js';
 import { notFoundHandler } from './src/middleware/notFound.middleware.js';
 import { errorHandler } from './src/middleware/error.middleware.js';
 import { connectDatabase } from './src/config/database.js';
+import { startTelegramBot, stopTelegramBot } from './src/telegram/telegramBot.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -89,6 +91,7 @@ app.use('/api/views', viewsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/referrals', referralsRoutes);
 app.use('/api/og-earn', ogEarnRoutes);
+app.use('/api/telegram', telegramRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -111,10 +114,29 @@ const start = async () => {
 
     await connectDatabase();
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Frontend origins: ${frontendOrigins.join(', ')}`);
     });
+
+    // Start Telegram after Mongo + HTTP are up (API process only; no second mongoose.connect)
+    await startTelegramBot();
+
+    const shutdown = async (signal) => {
+      console.log(`Received ${signal}, shutting down…`);
+      try {
+        await stopTelegramBot();
+      } catch (err) {
+        console.warn('Telegram shutdown error:', err?.message || err);
+      }
+      server.close(() => {
+        process.exit(0);
+      });
+      setTimeout(() => process.exit(0), 5000).unref();
+    };
+
+    process.once('SIGINT', () => void shutdown('SIGINT'));
+    process.once('SIGTERM', () => void shutdown('SIGTERM'));
   } catch (err) {
     console.error('Failed to start server:', err.message);
     process.exit(1);

@@ -17,6 +17,7 @@ import {
 } from '../utils/validators.js';
 import { resolveShareContext } from '../services/ogEarn.service.js';
 import { getOgEarnRules } from '../utils/ogEarnRules.js';
+import { queueVideoTelegramPublish } from '../services/telegramIntegration.service.js';
 
 const formatVideoListItem = async (video) => {
   const shareUrl = buildShareUrl(video.shareToken);
@@ -249,6 +250,16 @@ export const completeDirectUpload = async (req, res, next) => {
       video.storage.publicId
     );
 
+    const telegramDestinationIds = Array.isArray(req.body?.telegramDestinationIds)
+      ? req.body.telegramDestinationIds
+      : [];
+
+    const telegramPublish = await queueVideoTelegramPublish(
+      req.user.id,
+      video._id,
+      telegramDestinationIds
+    );
+
     return res.status(201).json({
       success: true,
       message: 'Video uploaded successfully',
@@ -262,6 +273,7 @@ export const completeDirectUpload = async (req, res, next) => {
         size: video.size,
         duration: video.duration,
         createdAt: video.createdAt,
+        telegramPublish,
       },
     });
   } catch (err) {
@@ -366,6 +378,13 @@ export const uploadVideo = async (req, res, next) => {
         size: video.size,
         duration: video.duration,
         createdAt: video.createdAt,
+        telegramPublish: await queueVideoTelegramPublish(
+          req.user.id,
+          video._id,
+          Array.isArray(req.body?.telegramDestinationIds)
+            ? req.body.telegramDestinationIds
+            : []
+        ),
       },
     });
   } catch (err) {
