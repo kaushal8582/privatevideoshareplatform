@@ -21,6 +21,20 @@ import { startTelegramBot, stopTelegramBot } from './src/telegram/telegramBot.js
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+/**
+ * Behind Nginx / Cloudflare / load balancer, clients send X-Forwarded-For.
+ * express-rate-limit needs trust proxy so it can identify real IPs.
+ * Set TRUST_PROXY=1 (or hop count) in production .env.
+ */
+const trustProxyEnv = process.env.TRUST_PROXY;
+if (trustProxyEnv === 'true' || trustProxyEnv === '1') {
+  app.set('trust proxy', 1);
+} else if (trustProxyEnv && !Number.isNaN(Number(trustProxyEnv))) {
+  app.set('trust proxy', Number(trustProxyEnv));
+} else if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 app.use(helmet());
 
 const frontendOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')

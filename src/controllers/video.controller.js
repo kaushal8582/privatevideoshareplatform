@@ -3,6 +3,8 @@ import Video from '../models/Video.js';
 import User from '../models/User.js';
 import UploadSession from '../models/UploadSession.js';
 import OgShareLink from '../models/OgShareLink.js';
+import TelegramPublication from '../models/TelegramPublication.js';
+import VideoView from '../models/VideoView.js';
 import storage from '../services/storage/storage.service.js';
 import { cleanupTempUpload } from '../utils/cleanupTempFile.js';
 import { generateShareToken } from '../utils/generateToken.js';
@@ -583,6 +585,8 @@ export const getVideoByShareToken = async (req, res, next) => {
 
 /**
  * DELETE /api/videos/:id
+ * Order: R2 objects first → then DB + related docs.
+ * If R2 fails, DB record is kept so we can retry delete later.
  */
 export const deleteVideo = async (req, res, next) => {
   try {
@@ -606,31 +610,52 @@ export const deleteVideo = async (req, res, next) => {
       });
     }
 
-    try {
-      await storage.deleteVideo(
-        video.storage.publicId,
-        video.storage.thumbnailPublicId
-      );
-    } catch (storageErr) {
-      console.error('Storage delete failed:', storageErr.message);
-      const error = new Error(
-        'Failed to delete video from storage. The video was not removed.'
-      );
-      error.statusCode = 502;
-      error.code = 'STORAGE_DELETE_FAILED';
-      throw error;
+    const publicId = video.storage?.publicId;
+    const thumbnailPublicId = video.storage?.thumbnailPublicId || null;
+
+    if (!publicId) {
+      return res.status(500).json({
+        success: false,
+        message: 'Video storage key missing. Cannot delete from R2.',
+        error: 'STORAGE_KEY_MISSING',
+      });
     }
 
+    let storageResult;
+    try {
+      storageResult = await storage.deleteVideo(publicId, thumbnailPublicId);
+    } catch (storageErr) {
+      console.error('[video] R2 delete failed:', storageErr.message);
+      return res.status(502).json({
+        success: false,
+        message: 'Failed to delete video from R2 storage. Database record was kept.',
+        error: 'STORAGE_DELETE_FAILED',
+      });
+    }
+
+    // R2 cleared — remove DB record and related data
     await Video.findByIdAndDelete(id);
-    await OgShareLink.updateMany(
-      { video: id },
-      { $set: { status: 'disabled' } }
+
+    await Promise.all([
+      OgShareLink.updateMany({ video: id }, { $set: { status: 'disabled' } }),
+      TelegramPublication.deleteMany({ videoId: id }),
+      VideoView.deleteMany({ video: id }),
+    ]);
+
+    console.log(
+      `[video] deleted id=${id} r2=${(storageResult?.requestedKeys || [publicId]).join(',')}`
     );
 
     return res.json({
       success: true,
-      message: 'Video deleted successfully',
-      data: { id },
+      message: 'Video deleted from R2 and database',
+      data: {
+        id,
+        storage: {
+          deletedFromR2: true,
+          keys: storageResult?.requestedKeys || [publicId],
+        },
+      },
     });
   } catch (err) {
     next(err);

@@ -3,6 +3,7 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   PutObjectCommand,
   UploadPartCommand,
@@ -207,37 +208,102 @@ export const uploadVideo = async (file) => {
   }
 };
 
+/**
+ * Delete video + thumbnail objects from R2.
+ * Always attempts both keys. Missing objects are treated as success (idempotent).
+ */
 export const deleteVideo = async (publicId, thumbnailPublicId = null) => {
   const { bucket } = getR2Config();
   const client = getR2Client();
 
-  if (!publicId) throw new Error('publicId is required to delete a video');
+  if (!publicId) {
+    const err = new Error('publicId is required to delete a video from R2');
+    err.code = 'STORAGE_DELETE_FAILED';
+    throw err;
+  }
 
-  const keysToDelete = [publicId];
+  const keys = new Set([String(publicId).trim()].filter(Boolean));
+
   if (thumbnailPublicId) {
-    keysToDelete.push(thumbnailPublicId);
-  } else {
-    keysToDelete.push(
-      publicId.replace(/^videos\//, 'thumbnails/').replace(/\.[^.]+$/, '.jpg')
-    );
+    keys.add(String(thumbnailPublicId).trim());
+  }
+
+  // Also try derived thumbnail path (covers older/auto thumbs)
+  const derivedThumb = String(publicId)
+    .replace(/^videos\//, 'thumbnails/')
+    .replace(/\.[^.]+$/, '.jpg');
+  if (derivedThumb && derivedThumb !== publicId) {
+    keys.add(derivedThumb);
+  }
+
+  const Objects = [...keys].filter(Boolean).map((Key) => ({ Key }));
+  if (Objects.length === 0) {
+    const err = new Error('No R2 keys to delete');
+    err.code = 'STORAGE_DELETE_FAILED';
+    throw err;
   }
 
   try {
-    await Promise.all(
-      keysToDelete.map((Key) =>
-        client.send(new DeleteObjectCommand({ Bucket: bucket, Key }))
-      )
+    // Prefer batch delete
+    const batch = await client.send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: {
+          Objects,
+          Quiet: false,
+        },
+      })
     );
-    return { result: 'ok' };
-  } catch (err) {
-    const status = err?.$metadata?.httpStatusCode;
-    if (status === 404 || err?.name === 'NoSuchKey') {
-      return { result: 'not found' };
+
+    const errors = Array.isArray(batch?.Errors) ? batch.Errors : [];
+    // Ignore not-found; fail on access/permission/etc.
+    const hardErrors = errors.filter(
+      (e) => e?.Code && !['NoSuchKey', 'NotFound'].includes(String(e.Code))
+    );
+    if (hardErrors.length) {
+      const msg = hardErrors.map((e) => `${e.Key}: ${e.Code} ${e.Message || ''}`).join('; ');
+      const err = new Error(`R2 deletion failed: ${msg}`);
+      err.code = 'STORAGE_DELETE_FAILED';
+      throw err;
     }
-    const error = new Error(`R2 deletion failed: ${err.message}`);
-    error.code = 'STORAGE_DELETE_FAILED';
-    error.details = err;
-    throw error;
+
+    console.log(
+      `[r2] deleted keys=${Objects.map((o) => o.Key).join(', ')} deleted=${(batch?.Deleted || []).length}`
+    );
+    return {
+      result: 'ok',
+      deletedKeys: (batch?.Deleted || []).map((d) => d.Key).filter(Boolean),
+      requestedKeys: Objects.map((o) => o.Key),
+    };
+  } catch (err) {
+    if (err?.code === 'STORAGE_DELETE_FAILED') throw err;
+
+    // Fallback: delete one-by-one if batch unsupported
+    const deletedKeys = [];
+    const failures = [];
+    for (const { Key } of Objects) {
+      try {
+        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key }));
+        deletedKeys.push(Key);
+      } catch (oneErr) {
+        const status = oneErr?.$metadata?.httpStatusCode;
+        if (status === 404 || oneErr?.name === 'NoSuchKey' || oneErr?.Code === 'NoSuchKey') {
+          deletedKeys.push(Key);
+          continue;
+        }
+        failures.push(`${Key}: ${oneErr.message}`);
+      }
+    }
+
+    if (failures.length) {
+      const error = new Error(`R2 deletion failed: ${failures.join('; ')}`);
+      error.code = 'STORAGE_DELETE_FAILED';
+      error.details = err;
+      throw error;
+    }
+
+    console.log(`[r2] deleted (fallback) keys=${deletedKeys.join(', ')}`);
+    return { result: 'ok', deletedKeys, requestedKeys: Objects.map((o) => o.Key) };
   }
 };
 
