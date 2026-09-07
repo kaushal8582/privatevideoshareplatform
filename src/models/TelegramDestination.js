@@ -16,6 +16,13 @@ const settingsSchema = new mongoose.Schema(
     adminBypass: { type: Boolean, default: true },
     includeThumbnail: { type: Boolean, default: true },
     includeDescription: { type: Boolean, default: true },
+    /** Option A: fixed caption slots around title + watch link */
+    messageFormat: {
+      beforeTitle: { type: String, trim: true, maxlength: 400, default: '' },
+      afterTitle: { type: String, trim: true, maxlength: 400, default: '' },
+      afterLink: { type: String, trim: true, maxlength: 400, default: '' },
+      footer: { type: String, trim: true, maxlength: 400, default: '' },
+    },
   },
   { _id: false }
 );

@@ -59,6 +59,7 @@ export function formatDestination(doc) {
   if (!doc) return null;
   const perms = doc.permissions || {};
   const settings = doc.settings || {};
+  const mf = settings.messageFormat || {};
   const type = doc.type;
   let actionRequired = false;
   let actionHint = null;
@@ -93,6 +94,12 @@ export function formatDestination(doc) {
       adminBypass: settings.adminBypass !== false,
       includeThumbnail: settings.includeThumbnail !== false,
       includeDescription: settings.includeDescription !== false,
+      messageFormat: {
+        beforeTitle: String(mf.beforeTitle || ''),
+        afterTitle: String(mf.afterTitle || ''),
+        afterLink: String(mf.afterLink || ''),
+        footer: String(mf.footer || ''),
+      },
     },
     isActive: Boolean(doc.isActive),
     actionRequired,
@@ -100,6 +107,44 @@ export function formatDestination(doc) {
     connectedAt: doc.connectedAt,
     disconnectedAt: doc.disconnectedAt,
   };
+}
+
+function sanitizeMessageSlot(value, max = 400) {
+  if (value == null) return undefined;
+  return String(value).trim().slice(0, max);
+}
+
+/**
+ * Build publish caption from locked core (title + link) + optional slots.
+ * Telegram photo caption max ≈ 1024 chars.
+ */
+export function buildPublishCaption({ title, watchUrl, messageFormat = {} }) {
+  const mf = messageFormat || {};
+  const parts = [];
+
+  const beforeTitle = sanitizeMessageSlot(mf.beforeTitle);
+  if (beforeTitle) parts.push(escapeHtml(beforeTitle));
+
+  parts.push(`🎬 <b>${escapeHtml(title || 'Untitled')}</b>`);
+
+  const afterTitle = sanitizeMessageSlot(mf.afterTitle);
+  if (afterTitle) parts.push(escapeHtml(afterTitle));
+
+  const link = String(watchUrl || '').trim();
+  if (link) parts.push(link);
+
+  const afterLink = sanitizeMessageSlot(mf.afterLink);
+  if (afterLink) parts.push(escapeHtml(afterLink));
+
+  const footer = sanitizeMessageSlot(mf.footer);
+  if (footer) parts.push(escapeHtml(footer));
+
+  let caption = parts.join('\n\n');
+  const MAX = 1024;
+  if (caption.length > MAX) {
+    caption = `${caption.slice(0, MAX - 1)}…`;
+  }
+  return caption;
 }
 
 export async function listDestinationsForUser(userId) {
@@ -110,7 +155,7 @@ export async function listDestinationsForUser(userId) {
 }
 
 export async function updateDestinationSettings(userId, destinationId, patch) {
-  const allowed = [
+  const boolKeys = [
     'autoPublish',
     'deleteLinks',
     'searchEnabled',
@@ -119,11 +164,21 @@ export async function updateDestinationSettings(userId, destinationId, patch) {
     'includeDescription',
   ];
   const $set = {};
-  for (const key of allowed) {
+  for (const key of boolKeys) {
     if (Object.prototype.hasOwnProperty.call(patch || {}, key)) {
       $set[`settings.${key}`] = Boolean(patch[key]);
     }
   }
+
+  const mf = patch?.messageFormat;
+  if (mf && typeof mf === 'object') {
+    for (const key of ['beforeTitle', 'afterTitle', 'afterLink', 'footer']) {
+      if (Object.prototype.hasOwnProperty.call(mf, key)) {
+        $set[`settings.messageFormat.${key}`] = sanitizeMessageSlot(mf[key], 400) || '';
+      }
+    }
+  }
+
   if (Object.keys($set).length === 0) {
     const err = new Error('No valid settings provided.');
     err.statusCode = 400;
@@ -271,10 +326,11 @@ export async function publishOne(publicationId) {
 
   const settings = destination.settings || {};
   const watchUrl = buildShareUrl(video.shareToken);
-  const title = escapeHtml(video.title || 'Untitled');
-
-  // Locked format: title + watch link only (no filename, no Watch Now button)
-  const caption = `🎬 <b>${title}</b>\n\n${watchUrl}`;
+  const caption = buildPublishCaption({
+    title: video.title || 'Untitled',
+    watchUrl,
+    messageFormat: settings.messageFormat,
+  });
 
   let thumbnailUrl = null;
   if (settings.includeThumbnail !== false) {
@@ -469,6 +525,12 @@ export async function connectDestinationFromTelegram({
           adminBypass: true,
           includeThumbnail: true,
           includeDescription: true,
+          messageFormat: {
+            beforeTitle: '',
+            afterTitle: '',
+            afterLink: '',
+            footer: '',
+          },
         },
       },
     },
