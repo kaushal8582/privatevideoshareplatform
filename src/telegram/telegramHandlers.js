@@ -1,4 +1,3 @@
-import { InlineKeyboardBuilder } from 'node-telegram-bot-api';
 import { searchVideosForTelegram } from './telegramSearch.service.js';
 import {
   connectDestinationFromTelegram,
@@ -308,26 +307,23 @@ async function replyNotFound(ctx, requestedTitle, from) {
 async function replyWithVideoResult(ctx, video, from, options = {}) {
   const { replyToUser = true, index = 1, total = 1 } = options;
   const mention = formatUserMention(from);
-  const title = escapeHtml(video.title);
-  const desc = video.shortDescription
-    ? `\n\n${escapeHtml(video.shortDescription)}`
-    : '';
+  const title = escapeHtml(video.title || 'Untitled');
+  const watchUrl = video.watchUrl || '';
   const counter = total > 1 ? `\nResult ${index}/${total}` : '';
 
-  const caption = `🎬 <b>${title}</b>${desc}\n\nRequested by ${mention}${counter}`;
-  const keyboard = new InlineKeyboardBuilder()
-    .url('▶️ Watch Now', video.watchUrl)
-    .build();
+  // Locked format: title + link (no Watch Now button, no filename)
+  const caption =
+    `🎬 <b>${title}</b>\n\n${watchUrl}\n\nRequested by ${mention}${counter}`;
 
   const chatId = ctx.chatId || ctx.message?.chat?.id;
   const common = {
     chat_id: chatId,
     parse_mode: 'HTML',
-    reply_markup: keyboard,
     reply_parameters:
       replyToUser && ctx.message?.message_id
         ? { message_id: ctx.message.message_id, allow_sending_without_reply: true }
         : undefined,
+    link_preview_options: { is_disabled: true },
   };
 
   try {
@@ -341,7 +337,6 @@ async function replyWithVideoResult(ctx, video, from, options = {}) {
       await ctx.api.sendMessage({
         ...common,
         text: caption,
-        link_preview_options: { is_disabled: true },
       });
     }
   } catch (err) {
@@ -351,7 +346,6 @@ async function replyWithVideoResult(ctx, video, from, options = {}) {
         chat_id: chatId,
         text: caption,
         parse_mode: 'HTML',
-        reply_markup: keyboard,
         link_preview_options: { is_disabled: true },
       });
     } catch (err2) {

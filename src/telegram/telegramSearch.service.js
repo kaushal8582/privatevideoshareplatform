@@ -8,8 +8,8 @@ function escapeRegex(s) {
 }
 
 /**
- * Search ready (public shareable) videos by title / originalName.
- * Video schema has no description field — originalName is used as short caption fallback.
+ * Search ready videos by title (and originalName for findability).
+ * Display always uses video.title only.
  */
 export async function searchVideosForTelegram(rawQuery, { limit = 5 } = {}) {
   const normalized = normalizeSearchText(rawQuery);
@@ -45,15 +45,8 @@ export async function searchVideosForTelegram(rawQuery, { limit = 5 } = {}) {
       console.warn('[telegram] thumbnail resolve failed:', err?.message || err);
     }
 
-    const title = v.title || v.originalName || 'Untitled';
-    let shortDescription = '';
-    if (v.originalName && normalizeSearchText(v.originalName) !== normalizeSearchText(title)) {
-      shortDescription = String(v.originalName).slice(0, 160);
-    }
-
     results.push({
-      title,
-      shortDescription,
+      title: v.title || 'Untitled',
       shareToken: v.shareToken,
       watchUrl: buildShareUrl(v.shareToken),
       thumbnailUrl: thumbnailUrl || null,

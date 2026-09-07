@@ -33,28 +33,38 @@ const runFfprobeDuration = async (filePath) => {
 const runFfmpegThumbnail = async (filePath, outputPath) => {
   if (!ffmpegPath) return false;
 
-  try {
-    await execFileAsync(ffmpegPath, [
-      '-ss',
-      '00:00:00.5',
+  // Prefer frame 60 (0-based index 59). Falls back to ~2s seek if select fails.
+  const attempts = [
+    [
       '-i',
       filePath,
+      '-vf',
+      "select=eq(n\\,59)",
       '-vframes',
       '1',
       '-q:v',
       '2',
       '-y',
       outputPath,
-    ]);
+    ],
+    ['-ss', '2', '-i', filePath, '-vframes', '1', '-q:v', '2', '-y', outputPath],
+    ['-ss', '0.5', '-i', filePath, '-vframes', '1', '-q:v', '2', '-y', outputPath],
+  ];
 
-    return fs.existsSync(outputPath);
-  } catch {
-    return false;
+  for (const args of attempts) {
+    try {
+      await execFileAsync(ffmpegPath, args);
+      if (fs.existsSync(outputPath)) return true;
+    } catch {
+      /* try next */
+    }
   }
+
+  return false;
 };
 
 /**
- * Extract duration (seconds) and a JPEG thumbnail (first frame) from a local video file.
+ * Extract duration (seconds) and a JPEG thumbnail (~frame 60) from a local video file.
  */
 export const extractVideoMetadata = async (filePath) => {
   const duration = await runFfprobeDuration(filePath);

@@ -272,19 +272,9 @@ export async function publishOne(publicationId) {
   const settings = destination.settings || {};
   const watchUrl = buildShareUrl(video.shareToken);
   const title = escapeHtml(video.title || 'Untitled');
-  let description = '';
-  if (settings.includeDescription !== false && video.originalName) {
-    const on = String(video.originalName);
-    if (on && on !== video.title) description = escapeHtml(on.slice(0, 200));
-  }
 
-  const caption =
-    `🎬 <b>${title}</b>` +
-    (description ? `\n\n${description}` : '') +
-    `\n\nNew video on MastPlayer.`;
-
-  const { InlineKeyboardBuilder } = await import('node-telegram-bot-api');
-  const keyboard = new InlineKeyboardBuilder().url('▶️ Watch Now', watchUrl).build();
+  // Locked format: title + watch link only (no filename, no Watch Now button)
+  const caption = `🎬 <b>${title}</b>\n\n${watchUrl}`;
 
   let thumbnailUrl = null;
   if (settings.includeThumbnail !== false) {
@@ -307,7 +297,7 @@ export async function publishOne(publicationId) {
           photo: thumbnailUrl,
           caption,
           parse_mode: 'HTML',
-          reply_markup: keyboard,
+          link_preview_options: { is_disabled: true },
         });
         messageId = sent?.message_id;
       } catch (photoErr) {
@@ -316,7 +306,6 @@ export async function publishOne(publicationId) {
           chat_id: destination.telegramChatId,
           text: caption,
           parse_mode: 'HTML',
-          reply_markup: keyboard,
           link_preview_options: { is_disabled: true },
         });
         messageId = sent?.message_id;
@@ -326,7 +315,6 @@ export async function publishOne(publicationId) {
         chat_id: destination.telegramChatId,
         text: caption,
         parse_mode: 'HTML',
-        reply_markup: keyboard,
         link_preview_options: { is_disabled: true },
       });
       messageId = sent?.message_id;
