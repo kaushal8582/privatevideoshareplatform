@@ -121,17 +121,48 @@ export const retryPublication = async (req, res, next) => {
         error: 'NOT_FOUND',
       });
     }
+    if (pub.status === 'published') {
+      return res.json({
+        success: true,
+        message: 'Already published',
+        data: {
+          id: String(pub._id),
+          status: pub.status,
+          error: null,
+        },
+      });
+    }
+    if (pub.status === 'publishing') {
+      return res.status(409).json({
+        success: false,
+        message: 'Publication is already in progress. Wait a moment and try again.',
+        error: 'IN_PROGRESS',
+      });
+    }
+
     pub.status = 'pending';
     pub.error = null;
+    pub.telegramMessageId = null;
+    pub.publishedAt = null;
     await pub.save();
+
     const updated = await publishOne(String(pub._id));
+    if (!updated) {
+      return res.status(500).json({
+        success: false,
+        message: 'Retry failed unexpectedly.',
+        error: 'RETRY_FAILED',
+      });
+    }
+
     return res.json({
       success: true,
-      message: 'Retry complete',
+      message: updated.status === 'published' ? 'Published successfully' : 'Retry finished with errors',
       data: {
         id: String(updated._id),
         status: updated.status,
-        error: updated.error,
+        error: updated.error || null,
+        publishedAt: updated.publishedAt || null,
       },
     });
   } catch (err) {
