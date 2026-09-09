@@ -1,6 +1,7 @@
 import Video from '../models/Video.js';
 import storage from '../services/storage/storage.service.js';
 import { buildShareUrl } from '../utils/validators.js';
+import { TELEGRAM_SEARCH_ALLOWED_CATEGORIES } from '../utils/videoCategories.js';
 import { normalizeSearchText } from './telegram.utils.js';
 
 function escapeRegex(s) {
@@ -9,6 +10,7 @@ function escapeRegex(s) {
 
 /**
  * Search ready videos by title (and originalName for findability).
+ * Adult / porn categories are never returned in group search.
  * Display always uses video.title only.
  */
 export async function searchVideosForTelegram(rawQuery, { limit = 5 } = {}) {
@@ -26,11 +28,12 @@ export async function searchVideosForTelegram(rawQuery, { limit = 5 } = {}) {
 
   const docs = await Video.find({
     status: 'ready',
+    category: { $in: TELEGRAM_SEARCH_ALLOWED_CATEGORIES },
     $or: [{ title: regex }, { originalName: regex }],
   })
     .sort({ viewCount: -1, createdAt: -1 })
     .limit(limit)
-    .select('title originalName shareToken duration viewCount storage createdAt')
+    .select('title originalName shareToken duration viewCount storage createdAt category')
     .lean();
 
   const results = [];

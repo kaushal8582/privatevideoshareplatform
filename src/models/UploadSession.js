@@ -15,6 +15,11 @@ const uploadSessionSchema = new mongoose.Schema(
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
     title: { type: String, default: null },
+    category: {
+      type: String,
+      enum: ['movie', 'web_series', 'adult', 'porn', 'other'],
+      default: 'adult',
+    },
     partCount: { type: Number, required: true },
     status: {
       type: String,

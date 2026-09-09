@@ -20,6 +20,10 @@ import {
 import { resolveShareContext } from '../services/ogEarn.service.js';
 import { getOgEarnRules } from '../utils/ogEarnRules.js';
 import { queueVideoTelegramPublish } from '../services/telegramIntegration.service.js';
+import {
+  DEFAULT_VIDEO_CATEGORY,
+  normalizeVideoCategory,
+} from '../utils/videoCategories.js';
 
 const formatVideoListItem = async (video) => {
   const shareUrl = buildShareUrl(video.shareToken);
@@ -31,6 +35,7 @@ const formatVideoListItem = async (video) => {
   return {
     id: video._id,
     title: video.title,
+    category: video.category || DEFAULT_VIDEO_CATEGORY,
     originalName: video.originalName,
     shareToken: video.shareToken,
     shareUrl,
@@ -72,6 +77,7 @@ export const initDirectUpload = async (req, res, next) => {
     const title =
       (req.body?.title && String(req.body.title).trim()) ||
       deriveTitleFromFilename(originalName);
+    const category = normalizeVideoCategory(req.body?.category);
 
     if (!originalName || !isAllowedExtension(originalName)) {
       return res.status(400).json({
@@ -131,6 +137,7 @@ export const initDirectUpload = async (req, res, next) => {
       mimeType,
       size,
       title,
+      category,
       partCount,
       status: 'pending',
       expiresAt: new Date(Date.now() + 6 * 60 * 60 * 1000),
@@ -221,10 +228,14 @@ export const completeDirectUpload = async (req, res, next) => {
       durationRaw != null && Number.isFinite(Number(durationRaw))
         ? Number(durationRaw)
         : null;
+    const category = normalizeVideoCategory(
+      req.body?.category ?? session.category
+    );
 
     const video = await Video.create({
       user: req.user.id,
       title: session.title || deriveTitleFromFilename(session.originalName),
+      category,
       originalName: session.originalName,
       shareToken,
       storage: {
@@ -268,6 +279,7 @@ export const completeDirectUpload = async (req, res, next) => {
       data: {
         id: video._id,
         title: video.title,
+        category: video.category || DEFAULT_VIDEO_CATEGORY,
         shareToken: video.shareToken,
         shareUrl,
         videoUrl: playbackUrl,
@@ -339,10 +351,12 @@ export const uploadVideo = async (req, res, next) => {
     const title =
       (req.body?.title && String(req.body.title).trim()) ||
       deriveTitleFromFilename(req.file.originalname);
+    const category = normalizeVideoCategory(req.body?.category);
 
     const video = await Video.create({
       user: req.user.id,
       title,
+      category,
       originalName: req.file.originalname,
       shareToken,
       storage: {
@@ -373,6 +387,7 @@ export const uploadVideo = async (req, res, next) => {
       data: {
         id: video._id,
         title: video.title,
+        category: video.category || DEFAULT_VIDEO_CATEGORY,
         shareToken: video.shareToken,
         shareUrl,
         videoUrl: playbackUrl,

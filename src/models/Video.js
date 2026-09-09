@@ -13,6 +13,12 @@ const videoSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    category: {
+      type: String,
+      enum: ['movie', 'web_series', 'adult', 'porn', 'other'],
+      default: 'adult',
+      index: true,
+    },
     originalName: {
       type: String,
       required: true,
